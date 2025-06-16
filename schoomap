@@ -1,0 +1,1376 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { initializeApp } from 'firebase/app';
+import {
+  getAuth,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  signInAnonymously
+} from 'firebase/auth';
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  collection,
+  query,
+  where,
+  addDoc,
+  getDocs,
+  Timestamp,
+  orderBy
+} from 'firebase/firestore';
+
+// Importeer Lucide React iconen
+import { Settings, Book, Info, LogIn, LogOut } from 'lucide-react';
+
+
+// Jouw Firebase Configuratie (gekopieerd uit Firebase Console)
+const firebaseConfig = {
+  apiKey: "AIzaSyAQf8SV7qf8FQkh7ayvRlBPR1-fRJ6d3Ks",
+  authDomain: "schoolmaps-6a5f3.firebaseapp.com",
+  projectId: "schoolmaps-6a5f3",
+  storageBucket: "schoolmaps-6a5f3.firebasestorage.app",
+  messagingSenderId: "336929063264",
+  appId: "1:336929063264:web:b633f4f66fd1b204899e05",
+  measurementId: "G-8KKCCFBFSL"
+};
+
+// We halen de appId nu direct uit je firebaseConfig
+const appId = firebaseConfig.appId;
+
+
+// Firebase App initialization
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+// Predefined subjects for selection
+const allSubjects = [
+  "Nederlands", "Wiskunde", "Engels", "Geschiedenis", "Aardrijkskunde",
+  "Natuurkunde", "Scheikunde", "Biologie", "Frans", "Duits", "Economie",
+  "Informatica", "Kunst", "Muziek", "Lichamelijke Opvoeding"
+];
+
+// Default profile image if none provided
+const defaultProfileImage = "https://placehold.co/100x100/A7F3D0/065F46?text=FP"; // Emerald tones
+
+// Custom modal component for in-app notifications
+const CustomModal = ({ message, onClose, confirmAction, cancelAction }) => {
+  const isConfirmModal = confirmAction && cancelAction;
+  return (
+    <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50 animate-fade-in">
+      <style>
+        {`
+          @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+          }
+          @keyframes scaleUp {
+            from { transform: scale(0.9); }
+            to { transform: scale(1.05); }
+          }
+          .animate-fade-in {
+            animation: fadeIn 0.3s ease-out forwards;
+          }
+          .animate-scale-up {
+            animation: scaleUp 0.3s ease-out forwards;
+          }
+        `}
+      </style>
+      <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full transform transition-all duration-300 scale-105 animate-scale-up">
+        {/* Render message safely, checking if it's an object or string */}
+        <p className="text-xl font-semibold text-gray-800 mb-6 text-center">
+          {typeof message === 'string' ? message : message.text}
+        </p>
+        {isConfirmModal ? (
+          <div className="flex justify-around space-x-4">
+            <button
+              onClick={() => { confirmAction(); onClose(); }}
+              className="flex-1 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold py-3 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-75 transition-colors duration-200 shadow-md hover:shadow-lg"
+            >
+              Bevestigen
+            </button>
+            <button
+              onClick={() => { cancelAction(); onClose(); }}
+              className="flex-1 bg-gray-300 hover:bg-gray-400 active:scale-95 text-gray-800 font-bold py-3 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-75 transition-colors duration-200 shadow-md hover:shadow-lg"
+            >
+              Annuleren
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={onClose}
+            className="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold py-3 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-opacity-75 transition-colors duration-200 shadow-md hover:shadow-lg"
+          >
+            Sluiten
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// New component for the checkmark animation
+const SuccessCheckmark = () => (
+  <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50 animate-fade-in">
+    <div className="bg-white rounded-full p-8 shadow-2xl flex items-center justify-center animate-scale-up-bounce">
+      <svg className="w-24 h-24 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+      </svg>
+      <style>{`
+        @keyframes scaleUpBounce {
+          0% { transform: scale(0.5); opacity: 0; }
+          60% { transform: scale(1.1); opacity: 1; }
+          100% { transform: scale(1); }
+        }
+        .animate-scale-up-bounce {
+          animation: scaleUpBounce 0.5s ease-out forwards;
+        }
+      `}</style>
+    </div>
+  </div>
+);
+
+// SocialMediaIcons component moved outside of App to be accessible
+const SocialMediaIcons = ({ themeClass, isSmall = false }) => (
+  <div className={`flex justify-${isSmall ? 'start' : 'center'} space-x-${isSmall ? '2' : '4'} mt-${isSmall ? '4' : '8'}`}>
+    <a href="https://www.tiktok.com/@jouwaccount" target="_blank" rel="noopener noreferrer"
+       className={`p-${isSmall ? '2' : '3'} rounded-full ${themeClass} bg-opacity-10 hover:bg-opacity-20 transition-all duration-200 active:scale-95 transform hover:scale-110`}
+       title="Volg ons op TikTok">
+      <svg xmlns="http://www.w3.org/2000/svg" width={isSmall ? "18" : "24"} height={isSmall ? "18" : "24"} viewBox="0 0 24 24" fill="currentColor" className={themeClass}>
+        <path d="M12.001 12.569v-1.637c0-2.439 1.481-2.96 1.993-2.96.347 0 .565.048.749.088v-2.733c-.22-.023-.48-.035-.749-.035-2.285 0-3.876 1.706-3.876 4.966v2.174c0 .878-.403 1.057-1.109 1.057h-.089v2.793h.089c1.401 0 2.233.197 2.233 2.196v3.197c0 .197.164.356.368.356h2.723c.204 0 .368-.159.368-.356v-6.071c0-.181-.077-.348-.282-.397zM20.25 0h-16.5c-2.062 0-3.75 1.688-3.75 3.75v16.5c0 2.062 1.688 3.75 3.75 3.75h16.5c2.062 0 3.75-1.688 3.75-3.75v-16.5c0-2.062-1.688-3.75-3.75-3.75zM21 20.25c0 .413-.337.75-.75.75h-16.5c-.413 0-.75-.337-.75-.75v-16.5c0-.413.337-.75.75-.75h16.5c.413 0 .75.337.75.75v16.5z"/>
+      </svg>
+    </a>
+    <a href="https://www.instagram.com/jouwaccount" target="_blank" rel="noopener noreferrer"
+       className={`p-${isSmall ? '2' : '3'} rounded-full ${themeClass} bg-opacity-10 hover:bg-opacity-20 transition-all duration-200 active:scale-95 transform hover:scale-110`}
+       title="Volg ons op Instagram">
+      <svg xmlns="http://www.w3.org/2000/svg" width={isSmall ? "18" : "24"} height={isSmall ? "18" : "24"} viewBox="0 0 24 24" fill="currentColor" className={themeClass}>
+        <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.341 1.025 4.341 4.341.058 1.265.07 1.645.07 4.85s-.012 3.584-.07 4.85c-.148 3.252-1.025 4.341-4.341 4.341-1.265.058-1.645.07-4.85.07s-3.584-.012-4.85-.07c-3.252-.148-4.341-1.025-4.341-4.341-.058-1.265-.07-1.645-.07-4.85s.012-3.584.07-4.85c.148-3.252 1.025-4.341 4.341-4.341 1.265-.058 1.645-.07 4.85-.07zm0-2.163c-3.259 0-3.667.014-4.947.072-4.354.195-5.836 1.242-5.836 5.836C.014 8.333 0 8.741 0 12c0 3.259.014 3.667.072 4.947.195 4.354 1.242 5.836 5.836 5.836 1.28.058 1.688.072 4.947.072s3.667-.014 4.947-.072c4.354-.195 5.836-1.242 5.836-5.836C23.986 15.667 24 15.259 24 12c0-3.259-.014-3.667-.072-4.947C23.733 2.699 22.686 1.217 18.152 1.217 16.872 1.159 16.464 1.145 13.205 1.145H12zM12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0 8c-1.657 0-3-1.343-3-3s1.343-3 3-3 3 1.343 3 3-1.343 3-3 3zm5.724-10.407c-.783 0-1.417.634-1.417 1.417s.634 1.417 1.417 1.417c.784 0 1.417-.634 1.417-1.417s-.633-1.417-1.417-1.417z"/>
+      </svg>
+    </a>
+    <a href="https://www.facebook.com/jouwaccount" target="_blank" rel="noopener noreferrer"
+       className={`p-${isSmall ? '2' : '3'} rounded-full ${themeClass} bg-opacity-10 hover:bg-opacity-20 transition-all duration-200 active:scale-95 transform hover:scale-110`}
+       title="Volg ons op Facebook">
+      <svg xmlns="http://www.w3.org/2000/svg" width={isSmall ? "18" : "24"} height={isSmall ? "18" : "24"} viewBox="0 0 24 24" fill="currentColor" className={themeClass}>
+        <path d="M22.675 0h-21.35c-.733 0-1.325.592-1.325 1.325v21.35c0 .733.592 1.325 1.325 1.325h11.493v-9.294h-3.13v-3.627h3.13v-2.193c0-3.102 1.893-4.788 4.659-4.788 1.325 0 2.463.099 2.795.143v3.24l-1.918.001c-1.504 0-1.795.715-1.795 1.763v2.313h3.587l-.467 3.627h-3.12v9.294h6.116c.733 0 1.325-.592 1.325-1.325v-21.35c0-.733-.592-1.325-1.325-1.325z"/>
+      </svg>
+    </a>
+  </div>
+);
+
+
+// Main React component
+const App = () => {
+  // ALL useState hooks MUST be declared here, unconditionally
+  const [userId, setUserId] = useState(null);
+  const [userEmail, setUserEmail] = useState('');
+  const [userName, setUserName] = useState('');
+  const [userProfilePicture, setUserProfilePicture] = useState(defaultProfileImage);
+  const [currentView, setCurrentView] = useState('intro');
+  const [showModal, setShowModal] = useState(false);
+  const [modalContent, setModalContent] = useState({ message: '', confirmAction: null, cancelAction: null });
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [themeColor, setThemeColor] = useState(localStorage.getItem('themeColor') || 'emerald');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [regName, setRegName] = useState('');
+  const [selectedRegSubjects, setSelectedRegSubjects] = useState([]);
+  const [regSchoolName, setRegSchoolName] = useState('');
+  const [regClassName, setRegClassName] = useState('');
+  const [userSubjects, setUserSubjects] = useState([]);
+  const [currentSubject, setCurrentSubject] = useState(null);
+  const [subjectFiles, setSubjectFiles] = useState([]);
+  const [selectedFileIds, setSelectedFileIds] = useState([]);
+  const [isSelectingFiles, setIsSelectingFiles] = useState(false);
+  const [newFileTitle, setNewFileTitle] = useState('');
+  const [newFileDescription, setNewFileDescription] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [settingsSchoolName, setSettingsSchoolName] = useState('');
+  const [settingsClassName, setSettingsClassName] = useState('');
+  const [settingsSelectedSubjects, setSettingsSelectedSubjects] = useState([]);
+  const [settingsProfilePictureUrl, setSettingsProfilePictureUrl] = useState('');
+  const [tempProfileFile, setTempProfileFile] = useState(null);
+  const [showSplash, setShowSplash] = useState(true);
+  const [openFaqId, setOpenFaqId] = useState(null);
+  const [showRegisterForm, setShowRegisterForm] = useState(false);
+  const [showSuccessCheckmark, setShowSuccessCheckmark] = useState(false);
+
+  // ALL useRef hooks MUST be declared here, after useState
+  const sidebarRef = useRef(null);
+
+  // ALL useCallback hooks MUST be declared here, after useRef
+  const getThemeClasses = useCallback((baseClass, variant) => {
+    if (variant === 'bg') {
+        return `${baseClass}-${themeColor}-500`;
+    } else if (variant === 'hover-bg') {
+        return `${baseClass}-${themeColor}-600`;
+    } else if (variant === 'text') {
+        return `text-${themeColor}-700`;
+    } else if (variant === 'border') {
+        return `border-${themeColor}-400`;
+    } else if (variant === 'ring') {
+        return `ring-${themeColor}-400`;
+    } else if (variant === 'bg-light') {
+        return `bg-${themeColor}-50`;
+    } else if (variant === 'border-light') {
+        return `border-${themeColor}-100`;
+    } else if (variant === 'text-strong') {
+        return `text-${themeColor}-800`; // Stronger text color for some elements
+    }
+    return '';
+  }, [themeColor]);
+
+  // Function to show modal
+  const showAppModal = useCallback((message, confirmAction = null, cancelAction = null) => {
+    setModalContent({ message, confirmAction, cancelAction });
+    setShowModal(true);
+  }, []);
+
+  // Function to close modal
+  const closeAppModal = useCallback(() => {
+    setShowModal(false);
+    setModalContent({ message: '', confirmAction: null, cancelAction: null });
+  }, []);
+
+
+  // ALL useEffect hooks MUST be declared here, unconditionally
+  // Effect to manage the splash screen duration
+  useEffect(() => {
+    const splashTimer = setTimeout(() => {
+      setShowSplash(false);
+    }, 2000); // 2 seconds
+
+    return () => clearTimeout(splashTimer); // Cleanup timer
+  }, []);
+
+  // Effect for Firebase initialization and authentication
+  useEffect(() => {
+    if (!showSplash) {
+      const initializeAuth = async () => {
+        try {
+          const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+            if (user) {
+              setUserId(user.uid);
+              setUserEmail(user.email || 'Anonieme Gebruiker');
+
+              const userDocRef = doc(db, `artifacts/${appId}/public/data/users`, user.uid);
+              const userDoc = await getDoc(userDocRef);
+
+              if (userDoc.exists()) {
+                const userData = userDoc.data();
+                setUserName(userData.userName || 'Gast Gebruiker');
+                setUserProfilePicture(userData.profilePictureUrl || defaultProfileImage);
+                setUserSubjects(Array.isArray(userData.selectedSubjects) ? userData.selectedSubjects : []);
+                setRegSchoolName(userData.schoolName || ''); // Set for consistency
+                setRegClassName(userData.className || ''); // Set for consistency
+
+                setSettingsSchoolName(userData.schoolName || '');
+                setSettingsClassName(userData.className || '');
+                setSettingsSelectedSubjects(Array.isArray(userData.selectedSubjects) ? userData.selectedSubjects : []);
+                setSettingsProfilePictureUrl(userData.profilePictureUrl || '');
+
+                // Determine the correct view based on profile completeness
+                if (userData.userName && userData.userName.trim() !== '' &&
+                    userData.selectedSubjects && userData.selectedSubjects.length > 0 &&
+                    userData.schoolName && userData.className) {
+                  setCurrentView('home'); // Go to home if profile is complete
+                } else {
+                  setCurrentView('settings'); // Else, go to settings to complete profile
+                }
+              } else {
+                // For brand new anonymous users or newly registered users without a Firestore profile yet:
+                setCurrentView('settings'); // Direct to settings to complete profile
+                setRegName('');
+                setSelectedRegSubjects([]);
+                setRegSchoolName('');
+                setRegClassName('');
+              }
+            } else {
+              setUserId(null);
+              setUserEmail('');
+              setUserName('');
+              setUserProfilePicture(defaultProfileImage);
+              setCurrentView('login');
+              setShowRegisterForm(false);
+            }
+          });
+          return () => unsubscribeAuth();
+        } catch (error) {
+          console.error("Fout bij initialiseren Firebase Auth (algemeen):", error);
+          showAppModal(`Kritieke fout bij het opstarten van de app: ${error.message}. Controleer uw Firebase-configuratie en internetverbinding. Belangrijk: Schakel 'Email/Password' en 'Anonymous' aanmelding in de Firebase Console in!`);
+          setCurrentView('login');
+        }
+      };
+
+      initializeAuth();
+    }
+  }, [showSplash, showAppModal]); // Added showAppModal to dependencies
+
+  // Effect for loading files when a subject is selected or search query changes
+  useEffect(() => {
+    if (!db || !userId || currentSubject === null) {
+      setSubjectFiles([]);
+      return;
+    }
+
+    const filesColRef = collection(db, `artifacts/${appId}/public/data/files`);
+    let q = query(
+      filesColRef,
+      where('ownerId', '==', userId),
+      where('subject', '==', currentSubject),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsubscribeFiles = onSnapshot(q, (snapshot) => {
+      let fetchedFiles = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      if (searchQuery.trim() !== '') {
+        const lowerCaseQuery = searchQuery.toLowerCase();
+        fetchedFiles = fetchedFiles.filter(file =>
+          file.title.toLowerCase().includes(lowerCaseQuery) ||
+          (file.description && file.description.toLowerCase().includes(lowerCaseQuery))
+        );
+      }
+      setSubjectFiles(fetchedFiles);
+    }, (error) => console.error(`Fout bij laden bestanden voor ${currentSubject}:`, error));
+
+    return () => unsubscribeFiles();
+  }, [db, userId, currentSubject, searchQuery]);
+
+  // Effect to save theme to local storage
+  useEffect(() => {
+    localStorage.setItem('themeColor', themeColor);
+  }, [themeColor]);
+
+  // Handle clicks outside sidebar to close it
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (sidebarRef.current && !sidebarRef.current.contains(event.target) && isSidebarOpen) {
+        const hamburgerButton = document.querySelector('.absolute.top-4.left-4 > button');
+        if (hamburgerButton && !hamburgerButton.contains(event.target)) {
+          setIsSidebarOpen(false);
+        }
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isSidebarOpen]);
+
+  // Helper function to copy text to clipboard using document.execCommand
+  const copyTextToClipboard = (text) => {
+    let textArea = document.createElement("textarea");
+    textArea.value = text;
+    // Make the textarea out of viewport so it doesn't interfere with the layout
+    textArea.style.position = "fixed";
+    textArea.style.left = "-999999px";
+    textArea.style.top = "-999999px";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textArea);
+      return successful; // true if successful, false otherwise
+    } catch (err) {
+      document.body.removeChild(textArea);
+      console.error("Fallback: Oops, unable to copy", err);
+      return false;
+    }
+  };
+
+  // --- Authentication Handlers ---
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    if (!regName.trim() || !email.trim() || !password.trim() || selectedRegSubjects.length === 0 || !regSchoolName.trim() || !regClassName.trim()) {
+        showAppModal("Vul alstublieft alle verplichte velden in (Naam, E-mail, Wachtwoord, Vakken, Schoolnaam, Klas).");
+        return;
+    }
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      // Set initial user profile data in Firestore immediately after Auth creation
+      await setDoc(doc(db, `artifacts/${appId}/public/data/users`, userCredential.user.uid), {
+        email: email,
+        userName: regName,
+        profilePictureUrl: defaultProfileImage,
+        createdAt: Timestamp.now(),
+        selectedSubjects: selectedRegSubjects,
+        schoolName: regSchoolName,
+        className: regClassName,
+        role: 'user' // Default role for all registered users
+      });
+
+      // Reset form fields after successful registration
+      setEmail('');
+      setPassword('');
+      setRegName('');
+      setSelectedRegSubjects([]);
+      setRegSchoolName('');
+      setRegClassName('');
+
+      setShowSuccessCheckmark(true); // Show success checkmark
+      setTimeout(() => {
+        setShowSuccessCheckmark(false);
+        // onAuthStateChanged will handle navigation
+      }, 1000); // Show checkmark for 1 second
+    } catch (error) {
+      console.error("Fout bij registratie:", error);
+      let errorMessage = "Registratie mislukt. Probeer opnieuw.";
+      if (error.code === 'auth/email-already-in-use') {
+        errorMessage = "Dit e-mailadres is al geregistreerd. Probeer in te loggen of reset uw wachtwoord.";
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = "Ongeldig e-mailadres. Voer een geldig e-mailadres in.";
+      } else if (error.code === 'auth/weak-password') {
+        errorMessage = "Wachtwoord is te zwak. Gebruik minimaal 6 tekens.";
+      } else if (error.code === 'auth/operation-not-allowed') {
+        errorMessage = "Registratie via e-mail/wachtwoord is niet ingeschakeld in Firebase. Schakel dit in.";
+      }
+      showAppModal(`Fout bij registratie: ${errorMessage}`);
+    }
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      // Reset form fields after successful login
+      setEmail('');
+      setPassword('');
+      // onAuthStateChanged will handle navigation
+    } catch (error) {
+      console.error("Fout bij login:", error);
+      let errorMessage = "Inloggen mislukt. Controleer uw e-mail en wachtwoord.";
+      if (error.code === 'auth/invalid-email' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        errorMessage = "Onjuiste e-mail of wachtwoord. Probeer opnieuw.";
+      } else if (error.code === 'auth/operation-not-allowed') {
+        errorMessage = "Inloggen via e-mail/wachtwoord is niet ingeschakeld in Firebase. Schakel dit in.";
+      }
+      showAppModal(`Fout bij login: ${errorMessage}`);
+    }
+  };
+
+  const handleAnonymousLogin = async () => {
+    try {
+      const userCredential = await signInAnonymously(auth);
+      const userUid = userCredential.user.uid;
+      const userDocRef = doc(db, `artifacts/${appId}/public/data/users`, userUid);
+
+      const userDoc = await getDoc(userDocRef);
+      if (!userDoc.exists()) {
+        // Create a basic profile for anonymous users if it doesn't exist
+        await setDoc(userDocRef, {
+          email: 'Anonieme Gebruiker',
+          userName: 'Gast Gebruiker',
+          profilePictureUrl: defaultProfileImage,
+          createdAt: Timestamp.now(),
+          selectedSubjects: [],
+          schoolName: '',
+          className: '',
+          role: 'anonymous'
+        });
+      }
+      // onAuthStateChanged will handle navigation
+    } catch (error) {
+      console.error("Fout bij anoniem inloggen:", error);
+      let errorMessage = "Anoniem inloggen mislukt. Probeer opnieuw.";
+      if (error.code === 'auth/operation-not-allowed') {
+        errorMessage = "Anonieme inlogmethode is niet ingeschakeld in Firebase. Schakel dit in.";
+      }
+      showAppModal(`Fout bij anoniem inloggen: ${errorMessage}`);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      // Reset all relevant states on logout
+      setUserId(null);
+      setUserEmail('');
+      setUserName('');
+      setUserProfilePicture(defaultProfileImage);
+      setCurrentView('login'); // Go back to login screen
+      setEmail(''); // Clear login form fields
+      setPassword('');
+      setRegName('');
+      setSelectedRegSubjects([]);
+      setRegSchoolName('');
+      setRegClassName('');
+      setUserSubjects([]);
+      setCurrentSubject(null);
+      setSubjectFiles([]);
+      setSelectedFileIds([]);
+      setIsSelectingFiles(false);
+      setNewFileTitle('');
+      setNewFileDescription('');
+      setSearchQuery('');
+      setIsSidebarOpen(false);
+      setShowRegisterForm(false);
+      showAppModal("Succesvol uitgelogd! Tot de volgende keer."); // Show message AFTER state is reset
+    } catch (error) {
+      console.error("Fout bij uitloggen:", error);
+      showAppModal(`Fout bij uitloggen: ${error.message}`);
+    }
+  };
+
+  // --- Registration Subjects Toggle (used in initial signup and settings) ---
+  const handleRegSubjectToggle = (subject) => {
+    setSelectedRegSubjects(prev =>
+        Array.isArray(prev) ? (prev.includes(subject) ? prev.filter(s => s !== subject) : [...prev, subject]) : [subject]
+    );
+  };
+
+  // --- File Management Handlers ---
+  const handleAddFile = async (subject) => {
+    if (!newFileTitle.trim()) {
+      showAppModal("Voer een titel in voor het bestand.");
+      return;
+    }
+    if (!userId) {
+        showAppModal("Niet ingelogd. Log in om bestanden toe te voegen.");
+        return;
+    }
+    try {
+      await addDoc(collection(db, `artifacts/${appId}/public/data/files`), {
+        title: newFileTitle,
+        description: newFileDescription,
+        subject: subject,
+        ownerId: userId,
+        createdAt: Timestamp.now(),
+        // Opmerking: Voor deze demo worden alleen metadata (titel, beschrijving) opgeslagen.
+        // Werkelijke bestandsopslag vereist Firebase Storage.
+        fileUrl: `https://example.com/files/${userId}/${subject}/${newFileTitle.replace(/\s/g, '_')}.pdf`
+      });
+      showAppModal("Bestand succesvol toegevoegd!");
+      setNewFileTitle('');
+      setNewFileDescription('');
+    } catch (error) {
+      console.error("Fout bij toevoegen bestand:", error);
+      showAppModal(`Fout bij toevoegen bestand: ${error.message}`);
+    }
+  };
+
+  const toggleFileSelection = (fileId) => {
+    setSelectedFileIds(prev =>
+      Array.isArray(prev) ? (prev.includes(fileId) ? prev.filter(id => id !== fileId) : [...prev, fileId]) : [fileId]
+    );
+  };
+
+  const handleDeleteSelectedFiles = async () => {
+    if (selectedFileIds.length === 0) {
+      showAppModal("Selecteer eerst bestanden om te verwijderen.");
+      return;
+    }
+    if (!userId) {
+        showAppModal("Niet ingelogd. Log in om bestanden te verwijderen.");
+        return;
+    }
+
+    showAppModal(
+      {
+        text: `Weet je zeker dat je ${selectedFileIds.length} bestand(en) wilt verwijderen?`,
+        confirmAction: async () => {
+          try {
+            await Promise.all(selectedFileIds.map(fileId =>
+              deleteDoc(doc(db, `artifacts/${appId}/public/data/files`, fileId))
+            ));
+            showAppModal("Geselecteerde bestanden succesvol verwijderd!");
+            setSelectedFileIds([]);
+            setIsSelectingFiles(false);
+          } catch (error) {
+            console.error("Fout bij verwijderen van geselecteerde bestanden:", error);
+            showAppModal(`Fout bij verwijderen van geselecteerde bestanden: ${error.message}`);
+          }
+        },
+        cancelAction: () => closeAppModal()
+      }
+    );
+  };
+
+  const handleShareFile = (file) => {
+    if (!userId) {
+        showAppModal("Niet ingelogd. Log in om bestanden te delen.");
+        return;
+    }
+    const shareUrl = `${window.location.origin}/share-file?id=${file.id}&subject=${file.subject}`;
+    if (copyTextToClipboard(shareUrl)) {
+        showAppModal(`Deellink voor '${file.title}' gekopieerd! Link: ${shareUrl}`);
+    } else {
+        showAppModal("Fout bij kopiëren deellink. Probeer handmatig te kopiëren.");
+    }
+  };
+
+  const handleShareSubject = (subject) => {
+    if (!userId) {
+        showAppModal("Niet ingelogd. Log in om vakken te delen.");
+        return;
+    }
+    const shareUrl = `${window.location.origin}/share-subject?user=${userId}&subject=${subject}`;
+    if (copyTextToClipboard(shareUrl)) {
+        showAppModal(`Deellink voor map '${subject}' gekopieerd! Link: ${shareUrl}`);
+    } else {
+        showAppModal("Fout bij kopiëren deellink. Probeer handmatig te kopiëren.");
+    }
+  };
+
+  // --- Settings Handlers ---
+  const handleSettingsProfileFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setTempProfileFile(file);
+      showAppModal(`Bestand geselecteerd: ${file.name}. Upload naar Firebase Storage is vereist voor een echte profielfoto.`);
+    } else {
+      setTempProfileFile(null);
+    }
+  };
+
+  const handleSaveSettings = async (e) => {
+    e.preventDefault();
+    if (!userId) {
+        showAppModal("Niet ingelogd. Log in of registreer om instellingen op te slaan.");
+        return;
+    }
+    // Validate required fields for settings
+    if (!userName.trim() || settingsSelectedSubjects.length === 0 || !settingsSchoolName.trim() || !settingsClassName.trim()) {
+      showAppModal("Vul alstublieft alle verplichte profielinformatie in (Naam, Vakken, Schoolnaam, Klas).");
+      return;
+    }
+
+    try {
+      const userDocRef = doc(db, `artifacts/${appId}/public/data/users`, userId);
+      await updateDoc(userDocRef, {
+        userName: userName,
+        schoolName: settingsSchoolName,
+        className: settingsClassName,
+        selectedSubjects: settingsSelectedSubjects,
+        profilePictureUrl: settingsProfilePictureUrl || defaultProfileImage
+      });
+      setUserSubjects(settingsSelectedSubjects); // Update local user subjects immediately
+      setRegSchoolName(settingsSchoolName);
+      setRegClassName(settingsClassName);
+      setUserProfilePicture(settingsProfilePictureUrl || defaultProfileImage);
+      showAppModal("Instellingen succesvol opgeslagen!");
+      setCurrentView('home'); // Go back to home after saving settings
+    } catch (error) {
+      console.error("Fout bij opslaan instellingen:", error);
+      showAppModal(`Fout bij opslaan instellingen: ${error.message}`);
+    }
+  };
+
+  const handleSettingsSubjectToggle = (subject) => {
+    setSettingsSelectedSubjects(prev =>
+      Array.isArray(prev) ? (prev.includes(subject) ? prev.filter(s => s !== subject) : [...prev, subject]) : [subject]
+    );
+  };
+
+  const handleThemeChange = (color) => {
+    setThemeColor(color);
+  };
+
+  // FAQ Data and Toggle
+  const faqData = [
+    {
+      question: "Hoe voeg ik nieuwe vakken toe?",
+      answer: "Je kunt nieuwe vakken toevoegen via het 'Instellingen' menu (tandwiel-icoon in de zijbalk). Onder 'Jouw Vakken' kun je vakken selecteren die automatisch op je homepage verschijnen."
+    },
+    {
+      question: "Kan ik anoniem bestanden toevoegen?",
+      answer: "Ja, je kunt anoniem bestanden toevoegen. Deze bestanden zijn alleen zichtbaar voor jou. Om ze te bewaren voor toekomstige sessies, raden we aan een account aan te maken."
+    },
+    {
+      question: "Hoe deel ik bestanden met anderen?",
+      answer: "Binnen een vakoverzicht kun je op de 'Deel' knop naast een bestand klikken om een deelbare link te genereren en te kopiëren."
+    },
+    {
+      question: "Kan ik mijn profielfoto wijzigen?",
+      answer: "Ja, in het 'Instellingen' menu kun je een URL voor je profielfoto invoeren of een bestand uploaden. Let op: Voor deze demo worden bestandsuploads niet daadwerkelijk opgeslagen in Firebase Storage."
+    }
+  ];
+
+  const toggleFaq = (id) => {
+    setOpenFaqId(openFaqId === id ? null : id);
+  };
+
+
+  // Conditional rendering for splash screen, and main app
+  if (showSplash) {
+    return (
+      // Splash screen
+      <div className={`fixed inset-0 flex items-center justify-center ${getThemeClasses('bg-gradient-to-br from', 'bg')} to-${themeColor}-700 z-50 animate-fade-out-delay`}>
+        <h1 className="text-white text-6xl font-extrabold tracking-wider animate-pulse-fade">SchoolMaps</h1>
+        {/* CSS for animation: */}
+        <style>
+          {`
+            @keyframes pulse-fade {
+              0%, 100% { opacity: 1; transform: scale(1); }
+              50% { opacity: 0.7; transform: scale(1.05); }
+            }
+            .animate-pulse-fade {
+              animation: pulse-fade 2s infinite alternate;
+            }
+
+            @keyframes fadeOutDelay {
+              0% { opacity: 1; }
+              80% { opacity: 1; } /* Stay visible for most of the duration */
+              100% { opacity: 0; visibility: hidden; }
+            }
+            .animate-fade-out-delay {
+              animation: fadeOutDelay 2.5s forwards; /* Adjust duration to match splashTimer + some fade time */
+            }
+          `}
+        </style>
+      </div>
+    );
+  }
+
+  // Render modal and success checkmark globally
+  const renderModal = () => {
+    if (!showModal) return null;
+    return (
+      <CustomModal
+        message={modalContent.message}
+        onClose={closeAppModal}
+        confirmAction={modalContent.confirmAction}
+        cancelAction={modalContent.cancelAction}
+      />
+    );
+  };
+
+  const renderSuccessCheckmark = () => {
+    if (!showSuccessCheckmark) return null;
+    return <SuccessCheckmark />;
+  };
+
+  // --- Render Intro View ---
+  if (currentView === 'intro') {
+    return (
+      <div className={`min-h-screen w-full flex flex-col items-center justify-center p-4 ${getThemeClasses('bg-gradient-to-br from', 'bg')} to-${themeColor}-700`}>
+        {renderModal()}
+        {renderSuccessCheckmark()}
+        <div className={`bg-white p-8 rounded-3xl shadow-2xl w-full max-w-md text-center ${getThemeClasses('border', 'border-light')} animate-fade-in`}>
+          <h2 className={`text-4xl font-extrabold text-center mb-6 ${getThemeClasses('text', 'text')}`}>Welkom bij de School Bestanden App!</h2>
+          <p className="text-lg text-gray-700 mb-8">
+            Beheer al je schoolbestanden per vak, school en klas.
+          </p>
+          <button
+            onClick={() => setCurrentView('login')}
+            className={`w-full ${getThemeClasses('bg', 'bg')} ${getThemeClasses('hover:bg', 'hover-bg')} active:scale-95 text-white font-bold py-4 px-5 rounded-xl shadow-xl flex items-center justify-center transition-all duration-200 hover:scale-105 focus:outline-none ${getThemeClasses('focus:ring', 'ring')} focus:ring-opacity-75`}
+          >
+            Start
+          </button>
+        </div>
+        <div className="mt-8 text-center">
+            <h3 className={`text-xl font-bold text-white mb-4`}>Volg ons op onze socials!</h3>
+            <SocialMediaIcons themeClass="text-white" />
+        </div>
+      </div>
+    );
+  }
+
+  // --- Render Login/Register View ---
+  if (!userId && currentView === 'login') {
+    return (
+      <div className={`min-h-screen w-full flex flex-col items-center justify-center p-4 ${getThemeClasses('bg-gradient-to-br from', 'bg')} to-${themeColor}-700`}>
+        {renderModal()}
+        {renderSuccessCheckmark()}
+        <div className={`bg-white p-6 sm:p-8 rounded-3xl shadow-2xl w-full max-w-md ${getThemeClasses('border', 'border-light')}`}>
+          <h2 className={`text-3xl font-extrabold text-center mb-8 ${getThemeClasses('text', 'text')}`}>
+            {showRegisterForm ? 'Registreer Nieuw Account' : 'Inloggen'}
+          </h2>
+          <form onSubmit={showRegisterForm ? handleRegister : handleLogin} className="space-y-6">
+            {showRegisterForm && ( // Only show name, subjects, school/class inputs if in registration mode
+                <>
+                    <div>
+                      <label htmlFor="regName" className="block text-gray-700 text-base font-bold mb-3">
+                        Jouw naam:
+                      </label>
+                      <input
+                        id="regName"
+                        type="text"
+                        value={regName}
+                        onChange={(e) => setRegName(e.target.value)}
+                        placeholder="Voornaam Achternaam"
+                        className={`shadow-inner appearance-none border border-gray-300 rounded-xl w-full py-4 px-5 text-gray-700 leading-tight focus:outline-none ${getThemeClasses('focus:ring', 'ring')} ${getThemeClasses('focus:border', 'border')} transition-all duration-200`}
+                        required
+                      />
+                    </div>
+                </>
+            )}
+            <div>
+              <label htmlFor="email" className="block text-gray-700 text-base font-bold mb-3">
+                E-mailadres:
+              </label>
+              <input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="jouw@email.com"
+                className={`shadow-inner appearance-none border border-gray-300 rounded-xl w-full py-4 px-5 text-gray-700 leading-tight focus:outline-none ${getThemeClasses('focus:ring', 'ring')} ${getThemeClasses('focus:border', 'border')} transition-all duration-200`}
+                required
+              />
+            </div>
+            <div>
+              <label htmlFor="password" className="block text-gray-700 text-base font-bold mb-3">
+                Wachtwoord:
+              </label>
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="********"
+                className={`shadow-inner appearance-none border border-gray-300 rounded-xl w-full py-4 px-5 text-gray-700 leading-tight focus:outline-none ${getThemeClasses('focus:ring', 'ring')} ${getThemeClasses('focus:border', 'border')} transition-all duration-200`}
+                required
+              />
+            </div>
+
+            {showRegisterForm && (
+                <>
+                    <div className="space-y-6">
+                      <p className="text-gray-700 text-center mt-4 mb-2 font-semibold">Selecteer de vakken die je volgt:</p>
+                      <div className="grid grid-cols-2 gap-3 max-h-48 overflow-y-auto custom-scrollbar p-2 rounded-lg border border-gray-200">
+                        {allSubjects.map(subject => (
+                          <button
+                            type="button" // Important to prevent form submission
+                            key={subject}
+                            onClick={() => handleRegSubjectToggle(subject)}
+                            className={`py-2 px-3 rounded-lg font-bold text-sm transition-all duration-200 border-2 active:scale-[0.98] ${
+                              selectedRegSubjects.includes(subject)
+                                ? `${getThemeClasses('bg', 'bg')} text-white ${getThemeClasses('border', 'hover-bg')} shadow-md`
+                                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
+                            }`}
+                          >
+                            {subject}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                        <label htmlFor="regSchoolName" className="block text-gray-700 text-base font-bold mb-3">
+                          Schoolnaam:
+                        </label>
+                        <input
+                          id="regSchoolName"
+                          type="text"
+                          value={regSchoolName}
+                          onChange={(e) => setRegSchoolName(e.target.value)}
+                          placeholder="Bijv. Fioretti College"
+                          className={`shadow-inner appearance-none border border-gray-300 rounded-xl w-full py-4 px-5 text-gray-700 leading-tight focus:outline-none ${getThemeClasses('focus:ring', 'ring')} ${getThemeClasses('focus:border', 'border')} transition-all duration-200`}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="regClassName" className="block text-gray-700 text-base font-bold mb-3">
+                          Klas:
+                        </label>
+                        <input
+                          id="regClassName"
+                          type="text"
+                          value={regClassName}
+                          onChange={(e) => setRegClassName(e.target.value)}
+                          placeholder="Bijv. Havo 3"
+                          className={`shadow-inner appearance-none border border-gray-300 rounded-xl w-full py-4 px-5 text-gray-700 leading-tight focus:outline-none ${getThemeClasses('focus:ring', 'ring')} ${getThemeClasses('focus:border', 'border')} transition-all duration-200`}
+                          required
+                        />
+                      </div>
+                </>
+            )}
+
+            <button
+              type="submit"
+              className={`w-full ${getThemeClasses('bg', 'bg')} ${getThemeClasses('hover:bg', 'hover-bg')} active:scale-95 text-white font-bold py-4 px-5 rounded-xl shadow-xl flex items-center justify-center transition-all duration-200 hover:scale-105 focus:outline-none ${getThemeClasses('focus:ring', 'ring')} focus:ring-opacity-75`}
+            >
+              {showRegisterForm ? 'Registreer Account' : 'Login'}
+            </button>
+          </form>
+
+          {showRegisterForm ? (
+              <button
+                onClick={() => setShowRegisterForm(false)}
+                className="w-full mt-6 bg-gray-200 hover:bg-gray-300 active:scale-95 text-gray-700 font-bold py-3 px-5 rounded-xl shadow-md transition-all duration-200 hover:scale-105"
+              >
+                Al een account? Login
+              </button>
+          ) : (
+              <button
+                onClick={() => setShowRegisterForm(true)}
+                className="w-full mt-6 bg-gray-200 hover:bg-gray-300 active:scale-95 text-gray-700 font-bold py-3 px-5 rounded-xl shadow-md transition-all duration-200 hover:scale-105"
+              >
+                Geen account? Registreer
+              </button>
+          )}
+          <button
+            onClick={handleAnonymousLogin}
+            className={`w-full mt-4 ${getThemeClasses('bg', 'bg-light')} ${getThemeClasses('hover:bg', 'border')} active:scale-95 text-${themeColor}-800 font-bold py-3 px-5 rounded-xl shadow-md transition-all duration-200 hover:scale-105`}
+          >
+            Sla over
+          </button>
+        </div>
+        <div className="mt-8 text-center">
+            <h3 className={`text-xl font-bold text-white mb-4`}>Volg ons op onze socials!</h3>
+            <SocialMediaIcons themeClass="text-white" />
+        </div>
+      </div>
+    );
+  }
+
+  // --- Main App Views ---
+  return (
+    <div className={`min-h-screen w-full flex flex-col items-center ${getThemeClasses('bg', 'bg-light')} p-4`}>
+      {renderModal()}
+      {renderSuccessCheckmark()}
+
+      <div className={`bg-white p-6 sm:p-8 rounded-3xl shadow-2xl w-full max-w-3xl mt-8 mb-8 ${getThemeClasses('border', 'border-light')} relative`}>
+        <h1 className={`text-4xl font-extrabold text-center mb-6 ${getThemeClasses('text', 'text')}`}>Jouw School Bestanden</h1>
+
+        {/* Hamburger menu / User Info */}
+        <div className="absolute top-4 left-4">
+          <button
+            onClick={() => setIsSidebarOpen(true)}
+            className={`p-2 rounded-lg ${getThemeClasses('bg', 'bg')} ${getThemeClasses('hover:bg', 'hover-bg')} active:scale-95 text-white shadow-md transition-colors duration-200`}
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+          </button>
+        </div>
+
+        {/* Top right action buttons */}
+        <div className="absolute top-4 right-4 flex space-x-2">
+          {userId ? (
+            <button
+              onClick={handleLogout}
+              className={`p-2 rounded-lg ${getThemeClasses('bg', 'bg')} ${getThemeClasses('hover:bg', 'hover-bg')} active:scale-95 text-white shadow-md transition-colors duration-200`}
+              title="Uitloggen"
+            >
+              <LogOut className="w-6 h-6" />
+            </button>
+          ) : (
+            <button
+              onClick={() => { setCurrentView('login'); setShowRegisterForm(false); }} // Navigate to login view and show login form by default
+              className={`p-2 rounded-lg ${getThemeClasses('bg', 'bg')} ${getThemeClasses('hover:bg', 'hover-bg')} active:scale-95 text-white shadow-md transition-colors duration-200`}
+              title="Account Aanmaken / Inloggen"
+            >
+              <LogIn className="w-6 h-6" />
+            </button>
+          )}
+        </div>
+
+
+        {/* Sidebar */}
+        <div
+          ref={sidebarRef}
+          className={`fixed inset-y-0 left-0 w-64 ${getThemeClasses('bg', 'bg-light')} shadow-lg z-40 transform transition-transform duration-300 ease-in-out p-6 flex flex-col ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        >
+          <button
+            onClick={() => setIsSidebarOpen(false)}
+            className={`absolute top-4 left-4 p-2 rounded-full ${getThemeClasses('bg', 'hover-bg')} active:scale-95 text-white transition-colors duration-200`}
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+          </button>
+
+          {/* Profile Section in Sidebar */}
+          <div className="flex flex-col items-center mb-8 mt-10">
+            <img src={userProfilePicture} alt="Profielafbeelding" className="w-24 h-24 rounded-full border-4 border-white shadow-md object-cover" />
+            <p className={`mt-4 text-xl font-bold ${getThemeClasses('text', 'text-strong')} text-center`}>{userName}</p>
+            <p className="text-sm text-gray-600 break-all text-center">{userEmail}</p>
+          </div>
+
+          {/* Sidebar Navigation */}
+          <nav className="flex-1 space-y-4">
+            <button
+              onClick={() => { setCurrentView('home'); setIsSidebarOpen(false); }}
+              className={`w-full text-left py-3 px-4 rounded-lg font-semibold transition-colors duration-200 active:scale-[0.98] ${currentView === 'home' ? `${getThemeClasses('bg', 'bg')} text-white shadow` : `text-gray-700 hover:${getThemeClasses('bg', 'bg-light')}`}`}
+            >
+              <Book className="w-5 h-5 inline-block mr-2" /> Mijn Vakken
+            </button>
+            <button
+              onClick={() => { setCurrentView('settings'); setIsSidebarOpen(false); }}
+              className={`w-full text-left py-3 px-4 rounded-lg font-semibold transition-colors duration-200 active:scale-[0.98] ${currentView === 'settings' ? `${getThemeClasses('bg', 'bg')} text-white shadow` : `text-gray-700 hover:${getThemeClasses('bg', 'bg-light')}`}`}
+            >
+              <Settings className="w-5 h-5 inline-block mr-2" /> Instellingen
+            </button>
+            {/* New App Info Button */}
+            <button
+              onClick={() => { setCurrentView('appInfo'); setIsSidebarOpen(false); }}
+              className={`w-full text-left py-3 px-4 rounded-lg font-semibold transition-colors duration-200 active:scale-[0.98] ${currentView === 'appInfo' ? `${getThemeClasses('bg', 'bg')} text-white shadow` : `text-gray-700 hover:${getThemeClasses('bg', 'bg-light')}`}`}
+            >
+              <Info className="w-5 h-5 inline-block mr-2" /> App Info
+            </button>
+            {/* New FAQ Button */}
+            <button
+              onClick={() => { setCurrentView('faq'); setIsSidebarOpen(false); }}
+              className={`w-full text-left py-3 px-4 rounded-lg font-semibold transition-colors duration-200 active:scale-[0.98] ${currentView === 'faq' ? `${getThemeClasses('bg', 'bg')} text-white shadow` : `text-gray-700 hover:${getThemeClasses('bg', 'bg-light')}`}`}
+            >
+              <svg className="w-5 h-5 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.228 9.247a4.998 4.998 0 00-.577 4.722m2.802-3.493A4.997 4.997 0 0012 11.215v-1.12c0-.986.347-1.928 1.002-2.624.651-.692 1.571-1.107 2.624-1.107a4.997 4.997 0 003.493-1.002m-3.493 1.002c.692.651 1.107 1.571 1.107 2.624v1.12c0 .986-.347 1.928-1.002 2.624m-2.802-3.493A4.998 4.998 0 008.228 9.247m0 0a4.997 4.997 0 00-4.722.577m4.722-.577c-.692.651-1.107 1.571-1.107 2.624v1.12c0 .986.347 1.928 1.002 2.624"></path></svg>
+              Veelgestelde Vragen
+            </button>
+          </nav>
+
+          {/* Socials in Sidebar */}
+          <div className="mt-auto pt-6 border-t border-gray-200">
+            <h4 className={`text-sm font-bold ${getThemeClasses('text', 'text')} mb-2`}>Volg ons!</h4>
+            <SocialMediaIcons themeClass={getThemeClasses('text', 'text')} isSmall={true} />
+          </div>
+        </div>
+
+        {/* Main content background overlay when sidebar is open */}
+        {isSidebarOpen && (
+          <div className="fixed inset-0 bg-gray-900 bg-opacity-50 z-30" onClick={() => setIsSidebarOpen(false)}></div>
+        )}
+
+
+        {/* --- Main Content Area (My Subjects/Files) --- */}
+        {currentView === 'home' && (
+          <div className="animate-fade-in space-y-6">
+            <h2 className={`text-2xl font-bold text-center ${getThemeClasses('text', 'text')}`}>Mijn Vakken & Bestanden</h2>
+
+            {currentSubject ? (
+                // --- Subject Detail View ---
+                <div className={`${getThemeClasses('bg', 'bg-light')} p-4 rounded-xl shadow-inner ${getThemeClasses('border', 'border-light')}`}>
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                        <button
+                            onClick={() => { setCurrentSubject(null); setIsSelectingFiles(false); setSelectedFileIds([]); }}
+                            className="bg-gray-300 hover:bg-gray-400 active:scale-95 text-gray-800 font-bold py-2 px-4 rounded-lg shadow transition-colors duration-200 flex items-center"
+                        >
+                            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                            Terug naar Vakken
+                        </button>
+                        <h3 className={`text-xl font-bold ${getThemeClasses('text', 'text-strong')}`}>{currentSubject}</h3>
+                        <button
+                            onClick={() => handleShareSubject(currentSubject)}
+                            className={`${getThemeClasses('bg', 'bg')} ${getThemeClasses('hover:bg', 'hover-bg')} active:scale-95 text-white font-bold py-2 px-4 rounded-lg shadow transition-colors duration-200 flex items-center`}
+                        >
+                            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 0a3 3 0 110 2.684m0 2.684a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z"></path></svg>
+                            Map Delen
+                        </button>
+                    </div>
+
+                    <div className="mb-4 flex flex-col sm:flex-row gap-2">
+                        <input
+                            type="text"
+                            placeholder="Zoek bestanden op titel..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className={`flex-grow p-3 rounded-lg border border-gray-300 focus:outline-none ${getThemeClasses('focus:ring', 'ring')} ${getThemeClasses('focus:border', 'border')} transition-all duration-200`}
+                        />
+                    </div>
+
+                    <div className="mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                        <h4 className="text-lg font-semibold text-gray-800 mb-3">Bestand toevoegen:</h4>
+                        <input
+                            type="text"
+                            placeholder="Titel (verplicht)"
+                            value={newFileTitle}
+                            onChange={(e) => setNewFileTitle(e.target.value)}
+                            className={`w-full p-3 mb-2 rounded-lg border border-gray-300 focus:outline-none ${getThemeClasses('focus:ring', 'ring')} ${getThemeClasses('focus:border', 'border')} transition-all duration-200`}
+                        />
+                        <textarea
+                            placeholder="Beschrijving (optioneel)"
+                            value={newFileDescription}
+                            onChange={(e) => setNewFileDescription(e.target.value)}
+                            rows="2"
+                            className={`w-full p-3 mb-3 rounded-lg border border-gray-300 focus:outline-none ${getThemeClasses('focus:ring', 'ring')} ${getThemeClasses('focus:border', 'border')} transition-all duration-200 resize-none`}
+                        ></textarea>
+                        <button
+                            onClick={() => handleAddFile(currentSubject)}
+                            className={`w-full ${getThemeClasses('bg', 'bg')} ${getThemeClasses('hover:bg', 'hover-bg')} active:scale-95 text-white font-bold py-3 px-6 rounded-lg shadow transition-all duration-200 flex items-center justify-center`}
+                        >
+                            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
+                            Voeg Bestand Toe
+                        </button>
+                        <p className="text-xs text-gray-500 mt-2 text-center">
+                            Let op: Voor deze demo worden alleen metadata (titel, beschrijving) opgeslagen. Werkelijke bestandsopslag vereist Firebase Storage.
+                        </p>
+                    </div>
+
+                    {/* File Selection and Deletion Controls */}
+                    <div className="mb-4 flex justify-end">
+                        {!isSelectingFiles ? (
+                            <button
+                                onClick={() => setIsSelectingFiles(true)}
+                                className={`bg-blue-500 hover:bg-blue-600 active:scale-95 text-white text-sm py-2 px-4 rounded-lg shadow transition-colors duration-200`}
+                            >
+                                Selecteer Bestanden
+                            </button>
+                        ) : (
+                            <div className="flex space-x-2">
+                                <button
+                                    onClick={handleDeleteSelectedFiles}
+                                    disabled={selectedFileIds.length === 0}
+                                    className={`bg-red-500 hover:bg-red-600 active:scale-95 text-white text-sm py-2 px-4 rounded-lg shadow transition-colors duration-200 ${selectedFileIds.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                >
+                                    Verwijder Geselecteerde ({selectedFileIds.length})
+                                </button>
+                                <button
+                                    onClick={() => { setIsSelectingFiles(false); setSelectedFileIds([]); }}
+                                    className={`bg-gray-300 hover:bg-gray-400 active:scale-95 text-gray-800 text-sm py-2 px-4 rounded-lg shadow transition-colors duration-200`}
+                                >
+                                    Annuleren
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    <h4 className="text-lg font-semibold text-gray-800 mb-3">Jouw Bestanden in {currentSubject} ({subjectFiles.length})</h4>
+                    {subjectFiles.length === 0 ? (
+                        <p className="text-gray-500 text-center italic">Geen bestanden gevonden in dit vak of voor deze zoekopdracht.</p>
+                    ) : (
+                        <ul className="space-y-4">
+                            {subjectFiles.map(file => (
+                                <li key={file.id} className={`bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center ${selectedFileIds.includes(file.id) ? `${getThemeClasses('bg', 'bg-light')} border-2 ${getThemeClasses('border', 'border')}` : ''}`}>
+                                    <div className="flex items-center w-full">
+                                        {isSelectingFiles && (
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedFileIds.includes(file.id)}
+                                                onChange={() => toggleFileSelection(file.id)}
+                                                className={`mr-3 w-5 h-5 ${getThemeClasses('text', 'text')} rounded focus:ring-${themeColor}-500 transition-all duration-200`}
+                                            />
+                                        )}
+                                        <div className="flex-1">
+                                            <p className="font-bold text-gray-800 text-lg">{file.title}</p>
+                                            {file.description && <p className="text-gray-600 text-sm mt-1">{file.description}</p>}
+                                            <p className="text-xs text-gray-500 mt-1">Toegevoegd: {new Date(file.createdAt.toMillis()).toLocaleDateString('nl-NL')}</p>
+                                        </div>
+                                    </div>
+                                    {!isSelectingFiles && (
+                                        <div className="flex space-x-2 mt-3 sm:mt-0">
+                                            <button onClick={() => handleShareFile(file)} className="bg-blue-500 hover:bg-blue-600 active:scale-95 text-white text-sm py-2 px-3 rounded-lg shadow transition-colors duration-200">Deel</button>
+                                        </div>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            ) : (
+                // --- Subject Selection View ---
+                <div className={`${getThemeClasses('bg', 'bg-light')} p-4 rounded-xl shadow-inner ${getThemeClasses('border', 'border-light')}`}>
+                    <h3 className={`text-xl font-semibold mb-4 ${getThemeClasses('text', 'text-strong')} text-center`}>Kies een vak om je bestanden te beheren:</h3>
+                    {userSubjects.length === 0 ? (
+                        <div className="text-center italic text-gray-600">
+                            <p className="mb-4">Het lijkt erop dat je profiel nog niet compleet is of dat je nog geen vakken hebt toegevoegd.</p>
+                            <p>Ga naar **Instellingen** (tandwiel-icoon in de zijbalk) om je profiel te voltooien en vakken te selecteren. Daarna verschijnen je vakken hier.</p>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {userSubjects.map(subject => (
+                                <button
+                                    key={subject}
+                                    onClick={() => setCurrentSubject(subject)}
+                                    className={`${getThemeClasses('bg', 'bg')} ${getThemeClasses('hover:bg', 'hover-bg')} active:scale-95 text-white font-bold py-4 px-6 rounded-xl shadow-lg transition-all duration-300 transform hover:scale-105 flex items-center justify-center text-center`}
+                                >
+                                    {subject}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+          </div>
+        )}
+
+        {/* --- Settings View --- */}
+        {currentView === 'settings' && (
+          <div className="animate-fade-in space-y-6">
+            <h2 className={`text-2xl font-bold text-center ${getThemeClasses('text', 'text')}`}>Instellingen</h2>
+
+            {/* Profile Fields */}
+            <div className={`${getThemeClasses('bg', 'bg-light')} p-4 rounded-xl shadow-inner ${getThemeClasses('border', 'border-light')}`}>
+                <h3 className={`text-xl font-semibold mb-3 ${getThemeClasses('text', 'text-strong')}`}>Profiel</h3>
+                <form onSubmit={handleSaveSettings} className="space-y-4">
+                    {/* Name field in settings, allowing existing users to edit it */}
+                    <div>
+                        <label htmlFor="userNameSettings" className="block text-gray-700 text-base font-bold mb-2">
+                            Jouw Naam:
+                        </label>
+                        <input
+                            id="userNameSettings"
+                            type="text"
+                            value={userName} // Use the actual userName state
+                            onChange={(e) => setUserName(e.target.value)}
+                            placeholder="Voornaam Achternaam"
+                            className={`shadow-inner appearance-none border border-gray-300 rounded-xl w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none ${getThemeClasses('focus:ring', 'ring')} ${getThemeClasses('focus:border', 'border')} transition-all duration-200`}
+                            required
+                        />
+                    </div>
+
+                    {/* Profile Picture */}
+                    <div className="flex flex-col items-center mb-4">
+                        <img src={settingsProfilePictureUrl || defaultProfileImage} alt="Profielafbeelding" className="w-24 h-24 rounded-full border-4 border-white shadow-md object-cover mb-3" />
+                        <input
+                            type="text"
+                            placeholder="Profielafbeelding URL (bijv. https://..."
+                            value={settingsProfilePictureUrl}
+                            onChange={(e) => setSettingsProfilePictureUrl(e.target.value)}
+                            className={`w-full p-3 mb-2 rounded-lg border border-gray-300 focus:outline-none ${getThemeClasses('focus:ring', 'ring')} ${getThemeClasses('focus:border', 'border')} transition-all duration-200`}
+                        />
+                        <p className="text-gray-700 text-sm mb-2">OF upload een bestand (PNG, JPG):</p>
+                        <input
+                            type="file"
+                            accept=".png,.jpg,.jpeg"
+                            onChange={handleSettingsProfileFileChange}
+                            className={`w-full p-3 rounded-lg border border-gray-300 focus:outline-none ${getThemeClasses('focus:ring', 'ring')} ${getThemeClasses('focus:border', 'border')} transition-all duration-200 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100`}
+                        />
+                        <p className="text-xs text-gray-500 mt-1 text-center">
+                            Opmerking: Bestandsupload toont alleen de selectie. Voor daadwerkelijke opslag is Firebase Storage nodig.
+                        </p>
+                    </div>
+
+                    {/* School & Class */}
+                    <div>
+                        <label htmlFor="settingsSchoolName" className="block text-gray-700 text-base font-bold mb-2">
+                            Schoolnaam:
+                        </label>
+                        <input
+                            id="settingsSchoolName"
+                            type="text"
+                            value={settingsSchoolName}
+                            onChange={(e) => setSettingsSchoolName(e.target.value)}
+                            placeholder="Schoolnaam"
+                            className={`shadow-inner appearance-none border border-gray-300 rounded-xl w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none ${getThemeClasses('focus:ring', 'ring')} ${getThemeClasses('focus:border', 'border')} transition-all duration-200`}
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="settingsClassName" className="block text-gray-700 text-base font-bold mb-2">
+                            Klas:
+                        </label>
+                        <input
+                            id="settingsClassName"
+                            type="text"
+                            value={settingsClassName}
+                            onChange={(e) => setSettingsClassName(e.target.value)}
+                            placeholder="Klas"
+                            className={`shadow-inner appearance-none border border-gray-300 rounded-xl w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none ${getThemeClasses('focus:ring', 'ring')} ${getThemeClasses('focus:border', 'border')} transition-all duration-200`}
+                            required
+                        />
+                    </div>
+
+                    {/* Subjects */}
+                    <div>
+                        <h3 className={`text-xl font-semibold mb-3 ${getThemeClasses('text', 'text-strong')}`}>Jouw Vakken</h3>
+                        <p className="text-gray-700 mb-4 text-center">Selecteer de vakken die je volgt:</p>
+                        <div className="grid grid-cols-2 gap-3 max-h-60 overflow-y-auto custom-scrollbar p-2 rounded-lg border border-gray-200">
+                            {allSubjects.map(subject => (
+                            <button
+                                type="button" // Important to prevent form submission
+                                key={subject}
+                                onClick={() => handleSettingsSubjectToggle(subject)}
+                                className={`py-3 px-4 rounded-lg font-bold text-sm transition-all duration-200 border-2 active:scale-[0.98] ${
+                                settingsSelectedSubjects.includes(subject)
+                                    ? `${getThemeClasses('bg', 'bg')} text-white ${getThemeClasses('border', 'hover-bg')} shadow-md`
+                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
+                                }`}
+                            >
+                                {subject}
+                            </button>
+                            ))}
+                        </div>
+                    </div>
+                    <button
+                        type="submit"
+                        className={`w-full ${getThemeClasses('bg', 'bg')} ${getThemeClasses('hover:bg', 'hover-bg')} active:scale-95 text-white font-bold py-4 px-5 rounded-xl shadow-xl flex items-center justify-center transition-all duration-200 hover:scale-105`}
+                    >
+                        Instellingen Opslaan
+                    </button>
+                </form>
+            </div>
+
+
+            {/* Theme Selector - Kept separate as it's not part of profile data submission */}
+            <div className={`${getThemeClasses('bg', 'bg-light')} p-4 rounded-xl shadow-inner ${getThemeClasses('border', 'border-light')}`}>
+                <h3 className={`text-xl font-semibold mb-3 ${getThemeClasses('text', 'text-strong')}`}>Kies je thema</h3>
+                <div className="flex justify-center space-x-3">
+                    {['emerald', 'blue', 'rose', 'purple'].map(color => (
+                        <button
+                            key={color}
+                            onClick={() => handleThemeChange(color)}
+                            className={`w-10 h-10 rounded-full shadow-md transition-all duration-200 transform ${themeColor === color ? 'scale-125 ring-2 ring-white ring-offset-2 ring-offset-gray-200' : 'hover:scale-110'} bg-${color}-500 active:scale-[0.98]`}
+                            title={color.charAt(0).toUpperCase() + color.slice(1)}
+                        ></button>
+                    ))}
+                </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* --- App Info View --- */}
+        {currentView === 'appInfo' && (
+            <div className="animate-fade-in space-y-6">
+                <h2 className={`text-2xl font-bold text-center ${getThemeClasses('text', 'text')}`}>App Informatie</h2>
+                <div className={`${getThemeClasses('bg', 'bg-light')} p-6 rounded-xl shadow-inner ${getThemeClasses('border', 'border-light')} text-gray-700`}>
+                    <p className="mb-4">
+                        Welkom bij de School Bestanden App! Deze applicatie is ontworpen om leerlingen en docenten te helpen met het organiseren en beheren van al hun schoolgerelateerde documenten en bestanden op één centrale plek.
+                    </p>
+                    <p className="mb-4">
+                        Met deze app kun je:
+                    </p>
+                    <ul className="list-disc list-inside mb-4 space-y-1">
+                        <li>Je schoolbestanden per vak organiseren.</li>
+                        <li>Bestanden toevoegen met titels en beschrijvingen.</li>
+                        <li>Geselecteerde bestanden gemakkelijk verwijderen.</li>
+                        <li>Je profielgegevens, vakken en thema-voorkeuren beheren.</li>
+                        <li>Inloggen met een eigen account of anoniem starten.</li>
+                    </ul>
+                    <p className="mb-4">
+                        We hopen dat deze app je helpt om je schoolwerk efficiënter te organiseren!
+                    </p>
+                    <div className="text-center mt-6 text-sm text-gray-500">
+                        <p>Versie: 1.0.0</p>
+                        <p>&copy; 2025 Jouw School Bestanden App. Alle rechten voorbehouden.</p>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* --- FAQ View --- */}
+        {currentView === 'faq' && (
+            <div className="animate-fade-in space-y-6">
+                <h2 className={`text-2xl font-bold text-center ${getThemeClasses('text', 'text')}`}>Veelgestelde Vragen</h2>
+                <div className={`${getThemeClasses('bg', 'bg-light')} p-6 rounded-xl shadow-inner ${getThemeClasses('border', 'border-light')} text-gray-700`}>
+                    {faqData.map((faq, index) => (
+                        <div key={index} className="mb-4 border-b border-gray-200 last:border-b-0">
+                            <button
+                                onClick={() => toggleFaq(index)}
+                                className={`w-full text-left py-3 px-4 font-semibold rounded-t-lg transition-colors duration-200 active:scale-[0.98] flex justify-between items-center ${
+                                    openFaqId === index ? `${getThemeClasses('bg', 'bg')} text-white` : 'bg-white hover:bg-gray-100 text-gray-800'
+                                }`}
+                            >
+                                {faq.question}
+                                <svg
+                                    className={`w-5 h-5 transition-transform duration-300 ${openFaqId === index ? 'rotate-180' : ''}`}
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                >
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+                                </svg>
+                            </button>
+                            <div
+                                className={`overflow-hidden transition-all duration-300 ease-in-out ${
+                                    openFaqId === index ? 'max-h-96 opacity-100 py-3 px-4' : 'max-h-0 opacity-0'
+                                } bg-white rounded-b-lg shadow-sm`}
+                            >
+                                <p>{faq.answer}</p>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )}
+
+      </div>
+    </div>
+  );
+};
+
+export default App;
